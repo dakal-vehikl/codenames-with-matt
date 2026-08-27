@@ -1,40 +1,44 @@
 <script setup lang="ts">
 import { Head } from '@inertiajs/vue3';
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 
-import { endTurn, newGame, remainingFor, reveal } from '@/game/game';
+import { endTurn, newGame, otherTeam, remainingFor, reveal } from '@/game/game';
 import type { Card, Team } from '@/game/game';
 
 const game = ref(newGame());
 const spymasterView = ref(false);
+const handoff = ref(false);
+const revealsThisTurn = ref(0);
 
 const gameOver = computed(() => game.value.winner !== null);
+const themeTeam = computed<Team>(
+    () => game.value.winner ?? game.value.currentTeam,
+);
 
 const remaining = computed(() => ({
     red: remainingFor(game.value.cards, 'red'),
     blue: remainingFor(game.value.cards, 'blue'),
 }));
 
-function canReveal(card: Card): boolean {
-    return !card.revealed && !gameOver.value && !spymasterView.value;
-}
+const teamName: Record<Team, string> = { red: 'Red', blue: 'Blue' };
 
-function onReveal(index: number): void {
-    if (!canReveal(game.value.cards[index])) {
-        return;
-    }
-
-    game.value = reveal(game.value, index);
-}
-
-function onEndTurn(): void {
-    game.value = endTurn(game.value);
-}
-
-function onNewGame(): void {
-    game.value = newGame();
-    spymasterView.value = false;
-}
+const tones: Record<
+    Team,
+    { page: string; bar: string; ring: string; text: string }
+> = {
+    red: {
+        page: 'bg-red-50',
+        bar: 'bg-red-600',
+        ring: 'ring-red-300',
+        text: 'text-red-600',
+    },
+    blue: {
+        page: 'bg-blue-50',
+        bar: 'bg-blue-600',
+        ring: 'ring-blue-300',
+        text: 'text-blue-600',
+    },
+};
 
 const identityClasses: Record<Card['identity'], string> = {
     red: 'bg-red-600 text-white border-red-700',
@@ -43,15 +47,53 @@ const identityClasses: Record<Card['identity'], string> = {
     assassin: 'bg-stone-900 text-white border-black',
 };
 
-const teamClasses: Record<Team, string> = {
-    red: 'text-red-600',
-    blue: 'text-blue-600',
-};
+watch(
+    () => game.value.currentTeam,
+    () => {
+        if (!gameOver.value) {
+            handoff.value = true;
+        }
+    },
+);
 
-const teamBgClasses: Record<Team, string> = {
-    red: 'bg-red-600',
-    blue: 'bg-blue-600',
-};
+function canReveal(card: Card): boolean {
+    return (
+        !card.revealed &&
+        !gameOver.value &&
+        !spymasterView.value &&
+        !handoff.value
+    );
+}
+
+function onReveal(index: number): void {
+    if (!canReveal(game.value.cards[index])) {
+        return;
+    }
+
+    const before = game.value;
+
+    game.value = reveal(before, index);
+    revealsThisTurn.value =
+        game.value.currentTeam === before.currentTeam
+            ? revealsThisTurn.value + 1
+            : 0;
+}
+
+function onEndTurn(): void {
+    game.value = endTurn(game.value);
+    revealsThisTurn.value = 0;
+}
+
+function onStartTurn(): void {
+    handoff.value = false;
+}
+
+function onNewGame(): void {
+    game.value = newGame();
+    spymasterView.value = false;
+    handoff.value = false;
+    revealsThisTurn.value = 0;
+}
 
 function cardClasses(card: Card): string {
     if (card.revealed) {
@@ -62,83 +104,217 @@ function cardClasses(card: Card): string {
         return identityClasses[card.identity];
     }
 
-    return gameOver.value ? 'bg-white' : 'bg-white hover:bg-stone-50';
+    return canReveal(card) ? 'bg-white hover:bg-stone-50' : 'bg-white';
 }
+
+const CONFETTI_COUNT = 80;
+const confettiColours = [
+    '#facc15',
+    '#fb923c',
+    '#f472b6',
+    '#a78bfa',
+    '#4ade80',
+    '#ffffff',
+];
+
+const confetti = computed(() => {
+    if (!gameOver.value) {
+        return [];
+    }
+
+    return Array.from({ length: CONFETTI_COUNT }, (_, i) => ({
+        id: i,
+        style: {
+            left: `${(i / CONFETTI_COUNT) * 100}%`,
+            backgroundColor: confettiColours[i % confettiColours.length],
+            animationDelay: `${((i * 37) % 100) / 50}s`,
+            animationDuration: `${2.5 + ((i * 13) % 10) / 5}s`,
+        },
+    }));
+});
 </script>
 
 <template>
     <Head title="Codenames" />
     <div
-        class="flex min-h-screen flex-col items-center gap-6 bg-stone-100 p-8 text-stone-900"
+        class="min-h-screen text-stone-900 transition-colors duration-500"
+        :class="tones[themeTeam].page"
     >
-        <header class="flex w-full max-w-4xl items-center justify-between">
-            <h1 class="text-2xl font-semibold">Codenames</h1>
-            <p class="text-lg">
-                Turn:
-                <span
-                    class="font-semibold capitalize"
-                    :class="teamClasses[game.currentTeam]"
-                    data-testid="current-team"
-                >
-                    {{ game.currentTeam }}
-                </span>
-            </p>
-            <p class="text-lg">
-                <span class="font-semibold text-red-600"
-                    >Red {{ remaining.red }}</span
-                >
-                <span class="mx-2 text-stone-400">·</span>
-                <span class="font-semibold text-blue-600"
-                    >Blue {{ remaining.blue }}</span
-                >
-            </p>
-            <div class="flex items-center gap-3">
-                <label class="flex items-center gap-2 text-sm font-medium">
-                    <input v-model="spymasterView" type="checkbox" />
-                    Spymaster View
-                </label>
+        <div
+            class="px-8 py-5 text-white transition-colors duration-500"
+            :class="tones[themeTeam].bar"
+        >
+            <div class="mx-auto flex max-w-4xl items-center justify-between">
+                <div>
+                    <p
+                        class="text-3xl font-bold tracking-tight"
+                        data-testid="current-team"
+                    >
+                        <template v-if="game.winner"
+                            >{{ teamName[game.winner] }} team wins!</template
+                        >
+                        <template v-else
+                            >{{ teamName[game.currentTeam] }} team's
+                            turn</template
+                        >
+                    </p>
+                    <p class="mt-1 text-sm opacity-90">
+                        <template v-if="game.winner"
+                            >Press New Game to play again.</template
+                        >
+                        <template v-else-if="revealsThisTurn === 0"
+                            >Spymaster gives a clue, then operatives tap
+                            cards.</template
+                        >
+                        <template v-else
+                            >{{ revealsThisTurn }} revealed this turn — keep
+                            going or pass.</template
+                        >
+                    </p>
+                </div>
+                <div class="flex items-center gap-3">
+                    <label class="flex items-center gap-2 text-sm">
+                        <input v-model="spymasterView" type="checkbox" />
+                        Spymaster View
+                    </label>
+                    <button
+                        type="button"
+                        class="rounded-md bg-white/20 px-4 py-2 font-semibold hover:bg-white/30 disabled:cursor-not-allowed disabled:opacity-40"
+                        :disabled="gameOver || handoff"
+                        @click="onEndTurn"
+                    >
+                        Pass to {{ teamName[otherTeam(game.currentTeam)] }} →
+                    </button>
+                    <button
+                        type="button"
+                        class="rounded-md bg-white px-4 py-2 font-semibold text-stone-900 hover:bg-stone-100"
+                        @click="onNewGame"
+                    >
+                        New Game
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div
+            class="mx-auto flex max-w-4xl items-center justify-center gap-10 py-4 text-xl font-semibold"
+        >
+            <span
+                class="text-red-600"
+                :class="{ 'opacity-40': themeTeam !== 'red' }"
+                >Red · {{ remaining.red }} left</span
+            >
+            <span
+                class="text-blue-600"
+                :class="{ 'opacity-40': themeTeam !== 'blue' }"
+                >Blue · {{ remaining.blue }} left</span
+            >
+        </div>
+
+        <div
+            class="relative mx-auto max-w-4xl rounded-xl p-3 ring-4 transition-all duration-500"
+            :class="tones[themeTeam].ring"
+        >
+            <div
+                class="grid grid-cols-5 gap-3 transition-all duration-300"
+                :class="{ 'blur-sm': handoff }"
+            >
                 <button
+                    v-for="(card, index) in game.cards"
+                    :key="card.word"
                     type="button"
-                    class="rounded-md bg-stone-800 px-4 py-2 font-medium text-white hover:bg-stone-700 disabled:cursor-not-allowed disabled:opacity-40"
-                    :disabled="gameOver"
-                    @click="onEndTurn"
+                    class="flex h-24 items-center justify-center rounded-lg border border-stone-300 text-lg font-medium uppercase shadow-sm transition-colors"
+                    :class="[
+                        cardClasses(card),
+                        canReveal(card) ? 'cursor-pointer' : 'cursor-default',
+                    ]"
+                    :disabled="!canReveal(card)"
+                    @click="onReveal(index)"
                 >
-                    End Turn
-                </button>
-                <button
-                    type="button"
-                    class="rounded-md border border-stone-400 bg-white px-4 py-2 font-medium hover:bg-stone-50"
-                    @click="onNewGame"
-                >
-                    New Game
+                    {{ card.word }}
                 </button>
             </div>
-        </header>
 
-        <p
-            v-if="game.winner"
-            class="rounded-lg px-6 py-3 text-xl font-semibold text-white"
-            :class="teamBgClasses[game.winner]"
-            data-testid="winner"
-        >
-            <span class="capitalize">{{ game.winner }}</span> team wins!
-        </p>
-
-        <div class="grid w-full max-w-4xl grid-cols-5 gap-3">
-            <button
-                v-for="(card, index) in game.cards"
-                :key="card.word"
-                type="button"
-                class="flex h-24 items-center justify-center rounded-lg border border-stone-300 text-lg font-medium uppercase shadow-sm transition-colors"
-                :class="[
-                    cardClasses(card),
-                    canReveal(card) ? 'cursor-pointer' : 'cursor-default',
-                ]"
-                :disabled="!canReveal(card)"
-                @click="onReveal(index)"
+            <Transition
+                enter-active-class="transition duration-300"
+                enter-from-class="translate-y-4 opacity-0"
             >
-                {{ card.word }}
-            </button>
+                <div
+                    v-if="handoff"
+                    class="absolute inset-0 flex items-center justify-center"
+                >
+                    <div
+                        class="flex flex-col items-center gap-4 rounded-2xl bg-white p-10 text-center shadow-2xl"
+                    >
+                        <p
+                            class="text-sm font-bold tracking-widest text-stone-500 uppercase"
+                        >
+                            Turn over
+                        </p>
+                        <p
+                            class="text-3xl font-black"
+                            :class="tones[game.currentTeam].text"
+                        >
+                            Pass the screen to
+                            {{ teamName[game.currentTeam] }} team
+                        </p>
+                        <button
+                            type="button"
+                            class="rounded-lg px-8 py-3 text-lg font-semibold text-white"
+                            :class="tones[game.currentTeam].bar"
+                            @click="onStartTurn"
+                        >
+                            Start {{ teamName[game.currentTeam] }}'s turn
+                        </button>
+                    </div>
+                </div>
+            </Transition>
+
+            <div
+                v-if="game.winner"
+                class="absolute inset-0 flex items-center justify-center bg-white/50"
+            >
+                <p
+                    class="rounded-2xl px-12 py-6 text-5xl font-black text-white shadow-2xl"
+                    :class="tones[game.winner].bar"
+                    data-testid="winner"
+                >
+                    🎉 {{ teamName[game.winner] }} team wins!
+                </p>
+            </div>
+        </div>
+
+        <div
+            v-if="game.winner"
+            class="pointer-events-none fixed inset-0 overflow-hidden"
+            aria-hidden="true"
+        >
+            <span
+                v-for="piece in confetti"
+                :key="piece.id"
+                class="confetti absolute -top-4 h-3 w-2 rounded-sm"
+                :style="piece.style"
+            />
         </div>
     </div>
 </template>
+
+<style scoped>
+.confetti {
+    animation-name: confetti-fall;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+}
+
+@keyframes confetti-fall {
+    0% {
+        transform: translateY(0) rotate(0deg);
+        opacity: 1;
+    }
+
+    100% {
+        transform: translateY(110vh) rotate(720deg);
+        opacity: 0.6;
+    }
+}
+</style>

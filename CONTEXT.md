@@ -59,3 +59,7 @@ The Team that Revealed all its own Cards, or the Team opposing the one that Reve
 **New Game**:
 Discarding the current Board (finished or not) and generating a fresh one with a fresh Starting Team.
 _Avoid_: Restart, reset
+
+**Handoff**:
+The pause between Turns in which the shared screen is passed to the Team that is now up. Reveals are blocked until that Team starts its Turn.
+_Avoid_: Gate, transition screen, pass modal
